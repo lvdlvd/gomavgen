@@ -73,6 +73,20 @@ func main() {
 
 	log.Printf("Generating package %s dialect %d version %d", basename, dialect.Dialect, dialect.Version)
 
+	// Mark fields whose enum the dialect declares as a bitmask, so templates
+	// can annotate them accordingly.
+	bitmask := map[string]bool{}
+	for _, e := range dialect.Enums {
+		if e.Bitmask {
+			bitmask[e.Name] = true
+		}
+	}
+	for _, m := range dialect.Messages {
+		for _, f := range m.Fields {
+			f.Bitmask = f.Enum != "" && bitmask[f.Enum]
+		}
+	}
+
 	// fill in missing enum values, starting from highest found (?)
 	for _, v := range dialect.Enums {
 		max := uint64(0)

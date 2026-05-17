@@ -44,7 +44,7 @@ func Dialect(mid int) mavlink.Message {
 type {{$tpe}} struct {
 {{- range .Fields}}
 	/* {{notabs .Description}} */
-	{{underscoreToCamel .Name}}  {{if .Enum}}{{- if goarraysize .CType -}}[{{goarraysize .CType}}]{{end}}{{underscoreToCamel .Enum}} // {{end}}{{gotype .CType}}{{if .IsExtension}} /*EXTENSION*/{{end}}
+	{{underscoreToCamel .Name}}  {{if .Enum}}{{- if goarraysize .CType -}}[{{goarraysize .CType}}]{{end}}{{underscoreToCamel .Enum}} `mavlink:"{{gotype .CType}}{{if .Bitmask}},bitmask{{end}}"` {{else}}{{gotype .CType}}{{end}}{{if .IsExtension}} /*EXTENSION*/{{end}}
 {{end}}
 }
 

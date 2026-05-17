@@ -102,6 +102,7 @@ type MAVLink struct {
 
 type Enum struct {
 	Name        string   `xml:"name,attr"`
+	Bitmask     bool     `xml:"bitmask,attr"`
 	Description string   `xml:"description"`
 	Entries     []*Entry `xml:"entry"`
 }
@@ -142,6 +143,9 @@ type Field struct {
 	Enum        string `xml:"enum,attr"`
 	Description string `xml:",innerxml"`
 	IsExtension bool
+	// Bitmask is set after parsing when Enum refers to an enum the dialect
+	// declares as a bitmask. It is not read from the xml.
+	Bitmask bool
 }
 
 // Need to unmarshal Message by hand because '<extensions/>' changes the value of an attribute of nested tag 'field'
