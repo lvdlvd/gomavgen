@@ -2,8 +2,10 @@
 package main
 
 import (
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,6 +15,37 @@ import (
 	"text/template"
 )
 
+// builtinTemplates holds the language templates shipped with gomavgen, so it
+// can be run without a checkout of this repo. The base name without the .tmpl
+// extension ("go", "h", "hh", "c_crc", "c_dec", "c_enc", "c_fmt") selects one.
+//
+//go:embed *.tmpl
+var builtinTemplates embed.FS
+
+// builtinNames returns the available builtin template names (without the .tmpl
+// extension), sorted, for use in the usage message.
+func builtinNames() []string {
+	var names []string
+	ents, _ := fs.Glob(builtinTemplates, "*.tmpl")
+	for _, e := range ents {
+		names = append(names, strings.TrimSuffix(e, ".tmpl"))
+	}
+	sort.Strings(names)
+	return names
+}
+
+// loadTemplate resolves arg to a parsed template: first as the name of a
+// builtin (e.g. "go"), and only if no such builtin exists, as a path to a
+// template file on disk.
+func loadTemplate(arg string) (*template.Template, error) {
+	if data, err := builtinTemplates.ReadFile(arg + ".tmpl"); err == nil {
+		log.Println("builtin template:", arg)
+		return template.New(arg).Funcs(tmplfuncs).Parse(string(data))
+	}
+	log.Println("template file:", arg)
+	return template.New(filepath.Base(arg)).Funcs(tmplfuncs).ParseFiles(arg)
+}
+
 func main() {
 
 	log.SetFlags(0)
@@ -20,14 +53,14 @@ func main() {
 	flag.Parse()
 
 	if len(flag.Args()) != 2 {
-		log.Fatalf("Usage: %s path/to/lang.tmpl path/to/dialect.xml", os.Args[0])
+		log.Fatalf("Usage: %s (%s | path/to/lang.tmpl) path/to/dialect.xml",
+			os.Args[0], strings.Join(builtinNames(), " | "))
 	}
 
-	tmpl, err := template.New(filepath.Base(flag.Arg(0))).Funcs(tmplfuncs).ParseFiles(flag.Arg(0))
+	tmpl, err := loadTemplate(flag.Arg(0))
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Println("template file:", tmpl.Name())
 
 	_, fname := filepath.Split(flag.Arg(1))
 	basename := strings.ToLower(strings.TrimSuffix(fname, filepath.Ext(fname)))
