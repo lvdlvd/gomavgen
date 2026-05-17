@@ -2,13 +2,95 @@ package main
 
 import (
 	"encoding/xml"
+	"fmt"
 	"io"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 )
 
+// maxIncludeDepth bounds the include recursion to guard against cycles and
+// pathologically deep include chains.
+const maxIncludeDepth = 5
+
+// loadDialect parses the MAVLink xml file at path and recursively parses its
+// includes (which may themselves contain includes), merging everything into
+// dialect. enums tracks enums already merged, keyed by name, so that repeated
+// declarations across files have their entries concatenated rather than
+// duplicated. seen tracks the cleaned absolute path of every file already
+// loaded, so that diamond includes and cycles each load a file at most once.
+// depth counts include nesting and starts at 0 for the top-level file.
+//
+// The MAVLink spec says included enum declarations come first; we satisfy this
+// by recursing into includes before merging the current file's own enums and
+// messages. Version and dialect are taken from the outermost file that
+// specifies a non-zero value (top-level wins, then includes in order).
+func loadDialect(path string, dialect *MAVLink, enums map[string]*Enum, seen map[string]bool, depth int) error {
+	if depth > maxIncludeDepth {
+		return fmt.Errorf("%s: include depth exceeds %d", path, maxIncludeDepth)
+	}
+
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if seen[abs] {
+		log.Printf("Already loaded %s, skipping", path)
+		return nil
+	}
+	seen[abs] = true
+
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	var m MAVLink
+	err = xml.NewDecoder(f).Decode(&m)
+	f.Close()
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	log.Printf("Loaded %s dialect %d version %d (depth %d)", path, m.Dialect, m.Version, depth)
+
+	if dialect.Version == 0 {
+		dialect.Version = m.Version
+	}
+	if dialect.Dialect == 0 {
+		dialect.Dialect = m.Dialect
+	}
+
+	// Recurse into includes first so that included declarations come before
+	// the ones in this file, as the spec requires.
+	dname := filepath.Dir(path)
+	for _, inc := range m.Include {
+		if err := loadDialect(filepath.Join(dname, inc), dialect, enums, seen, depth+1); err != nil {
+			return err
+		}
+	}
+
+	// Enum declarations are merged: a repeated enum has the entries of this
+	// (later) file appended after the ones already collected from includes.
+	// The semantics of repeated enum entries or repeated message declarations
+	// are left open by the spec, so we naively concatenate and leave it to the
+	// Go compiler to flag redefinitions.
+	for _, e := range m.Enums {
+		if enums[e.Name] == nil {
+			enums[e.Name] = e
+			dialect.Enums = append(dialect.Enums, e)
+			continue
+		}
+		log.Printf("Merging %s enum %q", path, e.Name)
+		enums[e.Name].Entries = append(enums[e.Name].Entries, e.Entries...)
+	}
+
+	dialect.Messages = append(dialect.Messages, m.Messages...)
+	return nil
+}
+
 // The structure of the MAV schema
-// 		https://github.com/ArduPilot/pymavlink/blob/master/generator/mavschema.xsd
+//
+//	https://github.com/ArduPilot/pymavlink/blob/master/generator/mavschema.xsd
 type MAVLink struct {
 	Name     string
 	Include  []string   `xml:"include"`
@@ -79,10 +161,10 @@ func (m *Message) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	var ext bool
 	for {
 		token, err := d.Token()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
 			return err
 		}
 		switch tok := token.(type) {
@@ -143,7 +225,7 @@ func (s bySerialisationOrder) Less(i, j int) bool {
 }                                            // reverse!
 func (s bySerialisationOrder) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
-//lifted from
+// lifted from
 // https://github.com/mavlink/c_library_v2/blob/master/checksum.h#L25
 // https://play.golang.org/p/ycYYW7bMChP
 type crc16x25 uint16

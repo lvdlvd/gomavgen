@@ -2,7 +2,6 @@
 package main
 
 import (
-	"encoding/xml"
 	"flag"
 	"fmt"
 	"log"
@@ -30,60 +29,13 @@ func main() {
 	}
 	log.Println("template file:", tmpl.Name())
 
-	f, err := os.Open(flag.Arg(1))
-	if err != nil {
-		log.Fatal(err)
-	}
-	dname, fname := filepath.Split(f.Name())
+	_, fname := filepath.Split(flag.Arg(1))
 	basename := strings.ToLower(strings.TrimSuffix(fname, filepath.Ext(fname)))
 
 	dialect := MAVLink{Name: basename}
 
-	enums := map[string]*Enum{}
-
-	if err := xml.NewDecoder(f).Decode(&dialect); err != nil {
+	if err := loadDialect(flag.Arg(1), &dialect, map[string]*Enum{}, map[string]bool{}, 0); err != nil {
 		log.Fatal(err)
-	}
-	log.Printf("Top level %s dialect %d version %d", f.Name(), dialect.Dialect, dialect.Version)
-	f.Close()
-
-	for _, v := range dialect.Enums {
-		enums[v.Name] = v
-	}
-
-	// The spec says only includes in the top level xml are executed.
-	// The spec mentions repeated enum definitions (see below), but leaves the semantics
-	// of repeated enum entries or repeated message declarations open, so we'll naively process
-	// and leave it to the Go compiler to flag redefinitions.
-	for _, v := range dialect.Include {
-		f, err := os.Open(filepath.Join(dname, v))
-		if err != nil {
-			log.Fatal(err)
-		}
-		var inc MAVLink
-		if err := xml.NewDecoder(f).Decode(&inc); err != nil {
-			log.Fatal(v, ":", err)
-		}
-		log.Printf("Including %s dialect %d version %d", f.Name(), inc.Dialect, inc.Version)
-		f.Close()
-
-		// Enum declarations are to be merged, where the includes are supposed to come first
-		for _, vv := range inc.Enums {
-			if enums[vv.Name] == nil {
-				enums[vv.Name] = vv
-				dialect.Enums = append(dialect.Enums, vv)
-				continue
-			}
-			log.Printf("Merging %q enum %q", v, vv.Name)
-			enums[vv.Name].Entries = append(vv.Entries, enums[vv.Name].Entries...)
-		}
-
-		dialect.Messages = append(dialect.Messages, inc.Messages...)
-
-		if dialect.Version == 0 {
-			log.Println("Inheriting version from", v)
-			dialect.Version = inc.Version
-		}
 	}
 
 	log.Printf("Generating package %s dialect %d version %d", basename, dialect.Dialect, dialect.Version)
